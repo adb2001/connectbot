@@ -18,55 +18,82 @@
 package org.connectbot.util;
 
 import android.content.Context;
-import android.preference.DialogPreference;
+import android.os.Bundle;
+import android.support.v7.preference.DialogPreference;
+import android.support.v7.preference.PreferenceDialogFragmentCompat;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.SeekBar;
-import android.widget.SeekBar.OnSeekBarChangeListener;
 
 import org.connectbot.R;
 
 /**
- * @author kenny
- *
+ * @author kenny & alescdb
  */
-public class VolumePreference extends DialogPreference implements OnSeekBarChangeListener {
-	/**
-	 * @param context
-	 * @param attrs
-	 */
+public class VolumePreference extends DialogPreference {
+
+	@SuppressWarnings("unused")
+	public VolumePreference(Context context) {
+		super(context);
+	}
+
+	@SuppressWarnings("unused")
 	public VolumePreference(Context context, AttributeSet attrs) {
 		super(context, attrs);
-
-		setupLayout(context, attrs);
 	}
 
-	public VolumePreference(Context context, AttributeSet attrs, int defStyle) {
-		super(context, attrs, defStyle);
-
-		setupLayout(context, attrs);
+	@SuppressWarnings("unused")
+	public VolumePreference(Context context, AttributeSet attrs, int defStyleAttr) {
+		super(context, attrs, defStyleAttr);
 	}
 
-	private void setupLayout(Context context, AttributeSet attrs) {
-		setDialogLayoutResource(R.layout.volume_preference_dialog_layout);
-		setPersistent(true);
+	@SuppressWarnings("unused")
+	public VolumePreference(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+		super(context, attrs, defStyleAttr, defStyleRes);
 	}
 
-	@Override
-	protected void onBindDialogView(View view) {
-		super.onBindDialogView(view);
-		
-		SeekBar volumeBar = (SeekBar) view.findViewById(R.id.volume_bar);
-		volumeBar.setProgress((int) (getPersistedFloat(
-				PreferenceConstants.DEFAULT_BELL_VOLUME) * 100));
-		volumeBar.setOnSeekBarChangeListener(this);
+	public int getVolume() {
+		return (int) (getPersistedFloat(0.0f) * 100.0f);
 	}
 
-	public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-		persistFloat(progress / 100f);
+	public void setVolume(float volume) {
+		persistFloat(volume / 100f);
 	}
 
-	public void onStartTrackingTouch(SeekBar seekBar) { }
+	public static class VolumePreferenceDialogFragment extends PreferenceDialogFragmentCompat {
 
-	public void onStopTrackingTouch(SeekBar seekBar) { }
+		private SeekBar mVolumeBar;
+
+		public VolumePreferenceDialogFragment() {
+		}
+
+		public static VolumePreferenceDialogFragment newInstance(String key) {
+			VolumePreferenceDialogFragment fragment = new VolumePreferenceDialogFragment();
+			Bundle b = new Bundle(1);
+			b.putString("key", key);
+			fragment.setArguments(b);
+			return fragment;
+		}
+
+		@Override
+		protected void onBindDialogView(View view) {
+			super.onBindDialogView(view);
+
+			mVolumeBar = (SeekBar) view.findViewById(R.id.volume_bar);
+			mVolumeBar.setProgress(getVolumePreference().getVolume());
+		}
+
+		private VolumePreference getVolumePreference() {
+			return (VolumePreference) this.getPreference();
+		}
+
+		public void onDialogClosed(boolean positiveResult) {
+			if (positiveResult) {
+				int volume = mVolumeBar.getProgress();
+				if (this.getVolumePreference().callChangeListener(volume)) {
+					this.getVolumePreference().setVolume(volume);
+				}
+			}
+		}
+	}
 }

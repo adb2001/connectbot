@@ -67,8 +67,12 @@ android {
     dependencies {
         compile "com.android.support:recyclerview-v7:$supportLibraryVersion"
         compile "com.android.support:support-v4:$supportLibraryVersion"
+        compile "com.android.support:design:$supportLibraryVersion"
         compile "com.android.support:appcompat-v7:$supportLibraryVersion"
         compile "com.android.support:design:$supportLibraryVersion"
+        compile "com.android.support:preference-v7:$supportLibraryVersion"
+        // Only using theme PreferenceThemeOverlay.v14.Material
+        compile "com.android.support:preference-v14:$supportLibraryVersion"
 
         androidTestCompile("com.android.support.test:runner:$testRunnerVersion") {
             exclude module: "support-annotations"
