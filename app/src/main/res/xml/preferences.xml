@@ -114,11 +114,13 @@
 	<android.support.v7.preference.PreferenceCategory
 		android:title="@string/pref_keyboard_category">
 
+		<!--
 		<android.support.v7.preference.SwitchPreferenceCompat
 			android:key="alwaysvisible"
 			android:title="@string/pref_alwaysvisible_title"
 			android:defaultValue="false"
 			/>
+		-->
 
 		<android.support.v7.preference.SwitchPreferenceCompat
 			android:key="shiftfkeys"

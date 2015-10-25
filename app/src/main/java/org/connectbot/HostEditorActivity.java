@@ -17,21 +17,6 @@
 
 package org.connectbot;
 
-import java.nio.charset.Charset;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-
-import org.connectbot.bean.HostBean;
-import org.connectbot.service.TerminalBridge;
-import org.connectbot.service.TerminalManager;
-import org.connectbot.util.HostDatabase;
-import org.connectbot.util.PubkeyDatabase;
-
 import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Context;
@@ -43,13 +28,84 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Bundle;
 import android.os.IBinder;
-import android.preference.CheckBoxPreference;
-import android.preference.ListPreference;
-import android.preference.Preference;
-import android.preference.SwitchPreference;
+import android.support.v7.app.AppCompatActivity;
+import android.support.v7.preference.CheckBoxPreference;
+import android.support.v7.preference.ListPreference;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceFragmentCompat;
+import android.support.v7.preference.SwitchPreferenceCompat;
 import android.util.Log;
 
-public class HostEditorActivity extends AppCompatPreferenceActivity implements OnSharedPreferenceChangeListener {
+import org.connectbot.bean.HostBean;
+import org.connectbot.service.TerminalBridge;
+import org.connectbot.service.TerminalManager;
+import org.connectbot.util.HostDatabase;
+import org.connectbot.util.PubkeyDatabase;
+
+import java.nio.charset.Charset;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+
+public class HostEditorActivity extends AppCompatActivity {
+	protected static final String TAG = "CB.HostEditorActivity";
+
+	public static class CharsetHolder {
+		private static boolean initialized = false;
+
+		private static CharSequence[] charsetIds;
+		private static CharSequence[] charsetNames;
+
+		public static CharSequence[] getCharsetNames() {
+			if (charsetNames == null)
+				initialize();
+
+			return charsetNames;
+		}
+
+		public static CharSequence[] getCharsetIds() {
+			if (charsetIds == null)
+				initialize();
+
+			return charsetIds;
+		}
+
+		private synchronized static void initialize() {
+			if (initialized)
+				return;
+
+			List<CharSequence> charsetIdsList = new LinkedList<CharSequence>();
+			List<CharSequence> charsetNamesList = new LinkedList<CharSequence>();
+
+			for (Entry<String, Charset> entry : Charset.availableCharsets().entrySet()) {
+				Charset c = entry.getValue();
+				if (c.canEncode() && c.isRegistered()) {
+					String key = entry.getKey();
+					if (key.startsWith("cp")) {
+						// Custom CP437 charset changes
+						charsetIdsList.add("CP437");
+						charsetNamesList.add("CP437");
+					}
+					charsetIdsList.add(entry.getKey());
+					charsetNamesList.add(c.displayName());
+				}
+			}
+
+			charsetIds = charsetIdsList.toArray(new CharSequence[charsetIdsList.size()]);
+			charsetNames = charsetNamesList.toArray(new CharSequence[charsetNamesList.size()]);
+
+			initialized = true;
+		}
+
+		public static boolean isInitialized() {
+			return initialized;
+		}
+	}
+
 	public class CursorPreferenceHack implements SharedPreferences {
 		protected final String table;
 		protected final long id;
@@ -68,9 +124,9 @@ public class HostEditorActivity extends AppCompatPreferenceActivity implements O
 			// fill a cursor and cache the values locally
 			// this makes sure we don't have any floating cursor to dispose later
 
-			SQLiteDatabase db = hostdb.getWritableDatabase();
+			SQLiteDatabase db = mHostDatabase.getWritableDatabase();
 			Cursor cursor = db.query(table, null, "_id = ?",
-					new String[] { String.valueOf(id) }, null, null, null);
+					new String[]{String.valueOf(id)}, null, null, null);
 
 			if (cursor.moveToFirst()) {
 				for (int i = 0; i < cursor.getColumnCount(); i++) {
@@ -98,10 +154,10 @@ public class HostEditorActivity extends AppCompatPreferenceActivity implements O
 			}
 
 			public boolean commit() {
-				SQLiteDatabase db = hostdb.getWritableDatabase();
+				SQLiteDatabase db = mHostDatabase.getWritableDatabase();
 				db.beginTransaction();
 				try {
-					db.update(table, update, "_id = ?", new String[] {String.valueOf(id)});
+					db.update(table, update, "_id = ?", new String[]{String.valueOf(id)});
 					db.setTransactionSuccessful();
 				} finally {
 					db.endTransaction();
@@ -202,209 +258,184 @@ public class HostEditorActivity extends AppCompatPreferenceActivity implements O
 		public void unregisterOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {
 			listeners.remove(listener);
 		}
+	}
 
+	public static class FragmentHostEditor extends PreferenceFragmentCompat implements OnSharedPreferenceChangeListener {
+		private HostEditorActivity getHostEditorActivity() {
+			return ((HostEditorActivity) getActivity());
+		}
+
+		@Override
+		public void onCreatePreferences(Bundle icicle, String s) {
+			// TODO: we could pass through a specific ContentProvider uri here
+			//this.getPreferenceManager().setSharedPreferencesName(uri);
+
+			getHostEditorActivity().getPreferences().registerOnSharedPreferenceChangeListener(this);
+
+			this.addPreferencesFromResource(R.xml.host_prefs);
+
+			// add all existing pubkeys to our listpreference for user to choose from
+			// TODO: may be an issue here when this activity is recycled after adding a new pubkey
+			// TODO: should consider moving into onStart, but we dont have a good way of resetting the listpref after filling once
+			ListPreference pubkeyPref = (ListPreference) findPreference(HostDatabase.FIELD_HOST_PUBKEYID);
+
+			List<CharSequence> pubkeyNicks = new LinkedList<CharSequence>(Arrays.asList(pubkeyPref.getEntries()));
+			pubkeyNicks.addAll(getHostEditorActivity().getPubkeyDatabase().allValues(PubkeyDatabase.FIELD_PUBKEY_NICKNAME));
+			pubkeyPref.setEntries(pubkeyNicks.toArray(new CharSequence[pubkeyNicks.size()]));
+
+			List<CharSequence> pubkeyIds = new LinkedList<CharSequence>(Arrays.asList(pubkeyPref.getEntryValues()));
+			pubkeyIds.addAll(getHostEditorActivity().getPubkeyDatabase().allValues("_id"));
+			pubkeyPref.setEntryValues(pubkeyIds.toArray(new CharSequence[pubkeyIds.size()]));
+
+			// Populate the character set encoding list with all available
+			final ListPreference charsetPref = (ListPreference) findPreference(HostDatabase.FIELD_HOST_ENCODING);
+
+			if (CharsetHolder.isInitialized()) {
+				initCharsetPref(charsetPref);
+			} else {
+				String[] currentCharsetPref = new String[1];
+				currentCharsetPref[0] = charsetPref.getValue();
+				charsetPref.setEntryValues(currentCharsetPref);
+				charsetPref.setEntries(currentCharsetPref);
+
+				new Thread(new Runnable() {
+					public void run() {
+						initCharsetPref(charsetPref);
+					}
+				}).start();
+			}
+
+			this.updateSummaries();
+		}
+
+		private void updateSummaries() {
+			// for all text preferences, set hint as current database value
+			for (String key : getHostEditorActivity().getPreferences().values.keySet()) {
+				if (key.equals(HostDatabase.FIELD_HOST_POSTLOGIN)) continue;
+				Preference pref = this.findPreference(key);
+				if (pref == null) continue;
+				if (pref instanceof CheckBoxPreference || pref instanceof SwitchPreferenceCompat)
+					continue;
+				CharSequence value = getHostEditorActivity().getPreferences().getString(key, "");
+
+				if (key.equals(HostDatabase.FIELD_HOST_PUBKEYID)) {
+					try {
+						int pubkeyId = Integer.parseInt((String) value);
+						if (pubkeyId >= 0)
+							pref.setSummary(getHostEditorActivity().getPubkeyDatabase().getNickname(pubkeyId));
+						else if (pubkeyId == HostDatabase.PUBKEYID_ANY)
+							pref.setSummary(R.string.list_pubkeyids_any);
+						else if (pubkeyId == HostDatabase.PUBKEYID_NEVER)
+							pref.setSummary(R.string.list_pubkeyids_none);
+						continue;
+					} catch (NumberFormatException nfe) {
+						// Fall through.
+					}
+				} else if (pref instanceof ListPreference) {
+					ListPreference listPref = (ListPreference) pref;
+					int entryIndex = listPref.findIndexOfValue((String) value);
+					if (entryIndex >= 0)
+						value = listPref.getEntries()[entryIndex];
+				}
+
+				pref.setSummary(value);
+			}
+
+		}
+
+		private void initCharsetPref(final ListPreference charsetPref) {
+			charsetPref.setEntryValues(CharsetHolder.getCharsetIds());
+			charsetPref.setEntries(CharsetHolder.getCharsetNames());
+		}
+
+		public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+			// update values on changed preference
+			this.updateSummaries();
+
+			// Our CursorPreferenceHack always send null keys, so try to set charset anyway
+			TerminalBridge hostBridge = getHostEditorActivity().getHostBridge();
+			if (hostBridge != null)
+				hostBridge.setCharset(sharedPreferences
+						.getString(HostDatabase.FIELD_HOST_ENCODING, HostDatabase.ENCODING_DEFAULT));
+		}
+
+
+	}
+
+	private ServiceConnection mServiceConnection = new ServiceConnection() {
+		public void onServiceConnected(ComponentName className, IBinder service) {
+			TerminalManager bound = ((TerminalManager.TerminalBinder) service).getService();
+
+			mHostBridge = bound.getConnectedBridge(mHost);
+		}
+
+		public void onServiceDisconnected(ComponentName name) {
+			mHostBridge = null;
+		}
+	};
+	
+	protected HostDatabase mHostDatabase = null;
+	private CursorPreferenceHack mPreferences;
+	private PubkeyDatabase mPubkeyDatabase = null;
+	private HostBean mHost;
+	protected TerminalBridge mHostBridge;
+
+
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+
+		long hostId = getIntent().getLongExtra(Intent.EXTRA_TITLE, -1);
+		mHostDatabase = HostDatabase.get(this);
+		mPubkeyDatabase = PubkeyDatabase.get(this);
+		mHost = mHostDatabase.findHostById(hostId);
+		mPreferences = new CursorPreferenceHack(HostDatabase.TABLE_HOSTS, hostId);
+
+		getSupportFragmentManager()
+				.beginTransaction()
+				.replace(android.R.id.content, new FragmentHostEditor())
+				.commit();
 	}
 
 	@Override
 	public SharedPreferences getSharedPreferences(String name, int mode) {
 		//Log.d(this.getClass().toString(), String.format("getSharedPreferences(name=%s)", name));
-		return this.pref;
-	}
-
-	protected static final String TAG = "CB.HostEditorActivity";
-
-	protected HostDatabase hostdb = null;
-	private PubkeyDatabase pubkeydb = null;
-
-	private CursorPreferenceHack pref;
-	private ServiceConnection connection;
-
-	private HostBean host;
-	protected TerminalBridge hostBridge;
-
-	@Override
-	public void onCreate(Bundle icicle) {
-		super.onCreate(icicle);
-
-		long hostId = this.getIntent().getLongExtra(Intent.EXTRA_TITLE, -1);
-
-		// TODO: we could pass through a specific ContentProvider uri here
-		//this.getPreferenceManager().setSharedPreferencesName(uri);
-
-		this.hostdb = HostDatabase.get(this);
-		this.pubkeydb = PubkeyDatabase.get(this);
-
-		host = hostdb.findHostById(hostId);
-
-		connection = new ServiceConnection() {
-			public void onServiceConnected(ComponentName className, IBinder service) {
-				TerminalManager bound = ((TerminalManager.TerminalBinder) service).getService();
-
-				hostBridge = bound.getConnectedBridge(host);
-			}
-
-			public void onServiceDisconnected(ComponentName name) {
-				hostBridge = null;
-			}
-		};
-
-		this.pref = new CursorPreferenceHack(HostDatabase.TABLE_HOSTS, hostId);
-		this.pref.registerOnSharedPreferenceChangeListener(this);
-
-		this.addPreferencesFromResource(R.xml.host_prefs);
-
-		// add all existing pubkeys to our listpreference for user to choose from
-		// TODO: may be an issue here when this activity is recycled after adding a new pubkey
-		// TODO: should consider moving into onStart, but we dont have a good way of resetting the listpref after filling once
-		ListPreference pubkeyPref = (ListPreference) findPreference(HostDatabase.FIELD_HOST_PUBKEYID);
-
-		List<CharSequence> pubkeyNicks = new LinkedList<CharSequence>(Arrays.asList(pubkeyPref.getEntries()));
-		pubkeyNicks.addAll(pubkeydb.allValues(PubkeyDatabase.FIELD_PUBKEY_NICKNAME));
-		pubkeyPref.setEntries(pubkeyNicks.toArray(new CharSequence[pubkeyNicks.size()]));
-
-		List<CharSequence> pubkeyIds = new LinkedList<CharSequence>(Arrays.asList(pubkeyPref.getEntryValues()));
-		pubkeyIds.addAll(pubkeydb.allValues("_id"));
-		pubkeyPref.setEntryValues(pubkeyIds.toArray(new CharSequence[pubkeyIds.size()]));
-
-		// Populate the character set encoding list with all available
-		final ListPreference charsetPref = (ListPreference) findPreference(HostDatabase.FIELD_HOST_ENCODING);
-
-		if (CharsetHolder.isInitialized()) {
-			initCharsetPref(charsetPref);
-		} else {
-			String[] currentCharsetPref = new String[1];
-			currentCharsetPref[0] = charsetPref.getValue();
-			charsetPref.setEntryValues(currentCharsetPref);
-			charsetPref.setEntries(currentCharsetPref);
-
-			new Thread(new Runnable() {
-				public void run() {
-					initCharsetPref(charsetPref);
-				}
-			}).start();
-		}
-
-		this.updateSummaries();
+		return this.mPreferences;
 	}
 
 	@Override
 	public void onStart() {
 		super.onStart();
 
-		bindService(new Intent(this, TerminalManager.class), connection, Context.BIND_AUTO_CREATE);
+		bindService(new Intent(this, TerminalManager.class), mServiceConnection, Context.BIND_AUTO_CREATE);
 
-		hostdb = HostDatabase.get(this);
-		pubkeydb = PubkeyDatabase.get(this);
+		mHostDatabase = HostDatabase.get(this);
+		mPubkeyDatabase = PubkeyDatabase.get(this);
 	}
 
 	@Override
 	public void onStop() {
 		super.onStop();
 
-		unbindService(connection);
+		unbindService(mServiceConnection);
 
-		hostdb = null;
-		pubkeydb = null;
+		mHostDatabase = null;
+		mPubkeyDatabase = null;
 	}
 
-	private void updateSummaries() {
-		// for all text preferences, set hint as current database value
-		for (String key : this.pref.values.keySet()) {
-			if (key.equals(HostDatabase.FIELD_HOST_POSTLOGIN)) continue;
-			Preference pref = this.findPreference(key);
-			if (pref == null) continue;
-			if (pref instanceof CheckBoxPreference || pref instanceof SwitchPreference) continue;
-			CharSequence value = this.pref.getString(key, "");
-
-			if (key.equals(HostDatabase.FIELD_HOST_PUBKEYID)) {
-				try {
-					int pubkeyId = Integer.parseInt((String) value);
-					if (pubkeyId >= 0)
-						pref.setSummary(pubkeydb.getNickname(pubkeyId));
-					else if (pubkeyId == HostDatabase.PUBKEYID_ANY)
-						pref.setSummary(R.string.list_pubkeyids_any);
-					else if (pubkeyId == HostDatabase.PUBKEYID_NEVER)
-						pref.setSummary(R.string.list_pubkeyids_none);
-					continue;
-				} catch (NumberFormatException nfe) {
-					// Fall through.
-				}
-			} else if (pref instanceof ListPreference) {
-				ListPreference listPref = (ListPreference) pref;
-				int entryIndex = listPref.findIndexOfValue((String) value);
-				if (entryIndex >= 0)
-					value = listPref.getEntries()[entryIndex];
-			}
-
-			pref.setSummary(value);
-		}
-
+	public CursorPreferenceHack getPreferences() {
+		return mPreferences;
 	}
 
-	private void initCharsetPref(final ListPreference charsetPref) {
-		charsetPref.setEntryValues(CharsetHolder.getCharsetIds());
-		charsetPref.setEntries(CharsetHolder.getCharsetNames());
+	public PubkeyDatabase getPubkeyDatabase() {
+		return mPubkeyDatabase;
 	}
 
-	public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
-		// update values on changed preference
-		this.updateSummaries();
-
-		// Our CursorPreferenceHack always send null keys, so try to set charset anyway
-		if (hostBridge != null)
-			hostBridge.setCharset(sharedPreferences
-					.getString(HostDatabase.FIELD_HOST_ENCODING, HostDatabase.ENCODING_DEFAULT));
+	public HostBean getHost() {
+		return mHost;
 	}
 
-	public static class CharsetHolder {
-		private static boolean initialized = false;
-
-		private static CharSequence[] charsetIds;
-		private static CharSequence[] charsetNames;
-
-		public static CharSequence[] getCharsetNames() {
-			if (charsetNames == null)
-				initialize();
-
-			return charsetNames;
-		}
-
-		public static CharSequence[] getCharsetIds() {
-			if (charsetIds == null)
-				initialize();
-
-			return charsetIds;
-		}
-
-		private synchronized static void initialize() {
-			if (initialized)
-				return;
-
-			List<CharSequence> charsetIdsList = new LinkedList<CharSequence>();
-			List<CharSequence> charsetNamesList = new LinkedList<CharSequence>();
-
-			for (Entry<String, Charset> entry : Charset.availableCharsets().entrySet()) {
-				Charset c = entry.getValue();
-				if (c.canEncode() && c.isRegistered()) {
-					String key = entry.getKey();
-					if (key.startsWith("cp")) {
-						// Custom CP437 charset changes
-						charsetIdsList.add("CP437");
-						charsetNamesList.add("CP437");
-					}
-					charsetIdsList.add(entry.getKey());
-					charsetNamesList.add(c.displayName());
-				}
-			}
-
-			charsetIds = charsetIdsList.toArray(new CharSequence[charsetIdsList.size()]);
-			charsetNames = charsetNamesList.toArray(new CharSequence[charsetNamesList.size()]);
-
-			initialized = true;
-		}
-
-		public static boolean isInitialized() {
-			return initialized;
-		}
+	public TerminalBridge getHostBridge() {
+		return mHostBridge;
 	}
 }
